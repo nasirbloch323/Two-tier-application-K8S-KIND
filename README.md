@@ -1,258 +1,371 @@
-# 🐳 Two-Tier Flask + MySQL App
-### Deployed using Docker Networks on AWS EC2
+# Two-Tier Flask + MySQL Deployment on Kubernetes (KIND)
 
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)
-![Flask](https://img.shields.io/badge/Flask-000000?style=flat&logo=flask&logoColor=white)
-![MySQL](https://img.shields.io/badge/MySQL-4479A1?style=flat&logo=mysql&logoColor=white)
-![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat&logo=amazon-aws&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+## Project Overview
 
-> A Two-Tier web application with Flask backend and MySQL database — connected using Docker Bridge Network and deployed on AWS EC2.
+A fintech startup's personal expense tracking platform, deployed as a **two-tier architecture**:
 
----
+- **Tier 1 (Frontend/App):** Flask web application
+- **Tier 2 (Backend/Data):** MySQL database
 
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────┐
-│         AWS EC2 Instance            │
-│                                     │
-│  ┌──────────────┐  flask-net  ┌─────────────┐  │
-│  │  Flask App   │ ──────────► │    MySQL    │  │
-│  │  Port: 5000  │             │  Port: 3306 │  │
-│  └──────────────┘             └─────────────┘  │
-│                                     │
-└─────────────────────────────────────┘
-```
+Deployed on a **KIND (Kubernetes IN Docker)** cluster running inside an **AWS EC2** instance — a cost-effective alternative to AWS EKS for PoC purposes.
 
 ---
 
-## 🌐 Live Demo
+## Architecture
+
 ```
-http://YOUR_EC2_IP:5000
+                    [ User Browser ]
+                          │
+                    http://EC2_IP:5000
+                          │
+                ┌─────────────────────┐
+                │   EC2 Instance       │
+                │  (Ubuntu t2.medium)  │
+                │                      │
+                │  ┌────────────────┐  │
+                │  │  Docker Engine │  │
+                │  │  ┌──────────┐  │  │
+                │  │  │   KIND   │  │  │
+                │  │  │ Cluster  │  │  │
+                │  │  └──────────┘  │  │
+                │  └────────────────┘  │
+                └─────────────────────┘
+                          │
+        ┌─────────────────┴──────────────────┐
+        │        Kubernetes Cluster            │
+        │                                       │
+        │  ┌──────────────┐  ┌──────────────┐ │
+        │  │  Namespace:   │  │  Namespace:   │ │
+        │  │  flask-app    │  │  mysql-db     │ │
+        │  │               │  │               │ │
+        │  │ Deployment    │  │ Deployment    │ │
+        │  │ (flask pod)   │  │ (mysql pod)   │ │
+        │  │      │        │  │      │        │ │
+        │  │  Service      │──┼──▶Service      │ │
+        │  │  (NodePort    │  │  (ClusterIP   │ │
+        │  │   30007)      │  │   3306)       │ │
+        │  └──────────────┘  └──────────────┘ │
+        └───────────────────────────────────────┘
 ```
 
 ---
 
-## 🛠️ Tech Stack
-| Technology | Usage |
-|-----------|-------|
-| Python/Flask | Backend |
-| MySQL 5.7 | Database |
-| Docker | Containerization |
-| Docker Network | Container Communication |
-| AWS EC2 | Cloud Deployment |
+## Project Structure
+
+```
+Two-tier-application-K8S-KIND/
+│
+├── app.py                     # Flask app
+├── requirements.txt           # Python dependencies
+├── Dockerfile                 # Docker image definition
+│
+├── k8s-manifests/
+│   ├── namespaces/
+│   │   ├── flask-app.yaml
+│   │   └── mysql-db.yaml
+│   ├── flask-deployment.yaml  # Flask Deployment + Service
+│   └── mysql-deployment.yaml  # MySQL Deployment + Service
+│
+├── kind-config.yaml           # KIND cluster config
+│
+└── README.md                  # This file
+```
 
 ---
 
-## 🚀 Step-by-Step Deployment
+## Prerequisites
 
-### Step 1: Install Dependencies
+- AWS Account
+- Ubuntu 22.04 EC2 instance (t2.medium — 2 vCPU, 4GB RAM minimum)
+- DockerHub account (for pushing custom Flask image)
+
+---
+
+## Step-by-Step Deployment Guide
+
+### Step 1: Launch EC2 Instance
+
+1. AWS Console → EC2 → Launch Instance
+2. Configuration:
+   ```
+   Name: kind-two-tier-ec2
+   AMI: Ubuntu 22.04 LTS
+   Instance type: t2.medium (2 vCPU, 4GB RAM)
+   ```
+3. Security Group — allow inbound ports:
+   ```
+   22    → SSH
+   80    → HTTP
+   5000  → Flask app
+   3306  → MySQL (if needed)
+   ```
+4. Create/select a key pair and download the `.pem` file.
+5. Connect via SSH:
+   ```bash
+   chmod 400 mykey.pem
+   ssh -i mykey.pem ubuntu@<EC2_PUBLIC_IP>
+   ```
+
+---
+
+### Step 2: Install Docker
+
 ```bash
-# System update karo
-sudo apt update
-
-# Docker aur Git install karo
-sudo apt install -y docker.io git
-
-# Docker permission do
-sudo usermod -aG docker ubuntu
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y docker.io
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
 newgrp docker
-
-# Check karo
 docker --version
 ```
 
----
-
-### Step 2: Project Clone Karo
+Install MySQL client dependencies:
 ```bash
-# GitHub se clone karo
-https://github.com/nasirbloch323/two-tier-app-using-Docker-network-.git
-# Folder mein jao
-cd two-tier-flask-app
-
-# Files dekho
-ls
+sudo apt-get update
+sudo apt-get install -y python3-dev default-libmysqlclient-dev build-essential pkg-config
 ```
 
 ---
 
-### Step 3: Docker Network Banao
+### Step 3: Install kubectl and KIND
+
+**kubectl:**
 ```bash
-# Private network banao
-# Dono containers is network se communicate karenge
-docker network create flask-net
-
-# Network verify karo
-docker network ls
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/kubectl
+kubectl version --client
 ```
 
----
-
-### Step 4: Dockerfile Banao
+**KIND:**
 ```bash
-# Dockerfile create karo
-nano Dockerfile
-```
-
-```dockerfile
-# Base image
-FROM python:3.10-slim
-
-# Working directory set karo
-WORKDIR /app
-
-# Sari files copy karo
-COPY . .
-
-# Dependencies install karo
-RUN pip install -r requirements.txt
-
-# Port open karo
-EXPOSE 5000
-
-# App start karo
-CMD ["python", "app.py"]
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+kind version
 ```
 
 ---
 
-### Step 5: Flask Image Build Karo
+### Step 4: Create KIND Cluster
+
+Create `kind-config.yaml`:
+```yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+# Control plane node
+- role: control-plane
+  image: kindest/node:v1.28.0
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+  - containerPort: 443
+    hostPort: 443
+    protocol: TCP
+  - containerPort: 30007
+    hostPort: 30007
+    protocol: TCP
+# Worker node 1
+- role: worker
+  image: kindest/node:v1.28.0
+# Worker node 2
+- role: worker
+  image: kindest/node:v1.28.0
+```
+
+Create the cluster:
 ```bash
-# Docker image build karo
-docker build -t flask-app .
-
-# Images verify karo
-docker images
+kind create cluster --name two-tier-cluster --config kind-config.yaml
+kubectl cluster-info
+kubectl get nodes
 ```
 
 ---
 
-### Step 6: MySQL Container Chalao
+### Step 5: Create Namespaces
+
 ```bash
-# MySQL container start karo
-# flask-net network se connect karo
-docker run -d \
---name mysql \
---network flask-net \
--e MYSQL_DATABASE=mydb \
--e MYSQL_ROOT_PASSWORD=admin \
--p 3306:3306 \
-mysql:5.7
-
-# Check karo
-docker ps
+kubectl create namespace flask-app
+kubectl create namespace mysql-db
+kubectl get ns
 ```
 
 ---
 
-### Step 7: Flask App Container Chalao
+### Step 6: Build & Push Flask Docker Image
+
 ```bash
-# Flask container start karo
-# MySQL se connect karo environment variables se
-docker run -d \
---name flask-app \
---network flask-net \
--e MYSQL_HOST=mysql \
--e MYSQL_USER=root \
--e MYSQL_PASSWORD=admin \
--e MYSQL_DB=mydb \
--p 5000:5000 \
-flask-app
+git clone https://github.com/Umair1012/two-tier-app.git
+cd two-tier-app/app
 
-# Check karo
-docker ps
+docker build -t <dockerhub-username>/flask-two-tier:latest .
+docker login
+docker push <dockerhub-username>/flask-two-tier:latest
+cd ..
+```
+
+> MySQL uses the official `mysql:8` image directly — no custom build needed.
+
+---
+
+### Step 7: Kubernetes Manifests
+
+**mysql-deployment.yaml:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-deployment
+  namespace: mysql-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: rootpassword
+        ports:
+        - containerPort: 3306
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+  namespace: mysql-db
+spec:
+  selector:
+    app: mysql
+  ports:
+  - port: 3306
+    targetPort: 3306
+  type: ClusterIP
+```
+
+**flask-deployment.yaml:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-deployment
+  namespace: flask-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask
+  template:
+    metadata:
+      labels:
+        app: flask
+    spec:
+      containers:
+      - name: flask
+        image: <dockerhub-username>/flask-two-tier:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flask-service
+  namespace: flask-app
+spec:
+  selector:
+    app: flask
+  ports:
+  - port: 5000
+    targetPort: 5000
+    nodePort: 30007
+  type: NodePort
 ```
 
 ---
 
-### Step 8: Connection Verify Karo
+### Step 8: Deploy to Cluster
+
 ```bash
-# Network inspect karo
-docker network inspect flask-net
+kubectl apply -f k8s-manifests/mysql-deployment.yaml
+kubectl apply -f k8s-manifests/flask-deployment.yaml
 
-# Flask container mein ghuso
-docker exec -it flask-app /bin/sh
-
-# MySQL ping karo
-ping mysql
-
-# Bahar aao
-exit
-
-# Logs dekho
-docker logs flask-app
+kubectl get pods -n mysql-db
+kubectl get pods -n flask-app
+kubectl get svc -n mysql-db
+kubectl get svc -n flask-app
 ```
 
 ---
 
-### Step 9: AWS Security Group
-```
-EC2 → Security Groups → Inbound Rules:
+### Step 9: Access the Application
 
-Port 5000 → Flask App  → 0.0.0.0/0
-Port 3306 → MySQL      → 0.0.0.0/0
-Port 22   → SSH        → Your IP
-```
-
----
-
-### Step 10: Browser Mein Kholo
 ```bash
-# EC2 IP nikalo
-curl ifconfig.me
+kubectl port-forward svc/flask-service 5000:5000 -n flask-app --address 0.0.0.0
+```
 
-# Browser mein:
-http://YOUR_EC2_IP:5000
+Open in browser:
+```
+http://<EC2_PUBLIC_IP>:5000
 ```
 
 ---
 
-## ✅ Verify Sab Sahi Hai
+## Security Notes (Recommended Improvement)
+
+Currently the MySQL password is stored as plain text in the deployment YAML. For production-grade security, use a **Kubernetes Secret** instead:
+
 ```bash
-# Containers dekho
-docker ps
+kubectl create secret generic mysql-secret \
+  --from-literal=MYSQL_ROOT_PASSWORD=rootpassword -n mysql-db
+```
 
-# Expected Output:
-# flask-app → Port 5000 ✅
-# mysql     → Port 3306 ✅
-
-# Network dekho
-docker network inspect flask-net
-# flask-app aur mysql dono network mein ✅
+Then reference it in the deployment:
+```yaml
+env:
+- name: MYSQL_ROOT_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: mysql-secret
+      key: MYSQL_ROOT_PASSWORD
 ```
 
 ---
 
-## 📚 Key Concepts Learned
-```
-✅ Docker Network = Private road for containers
-✅ Bridge Network = Default secure network
-✅ Container Communication by Name
-✅ Environment Variables for Config
-✅ Two-Tier Architecture
-✅ AWS EC2 Deployment
-```
+## Troubleshooting
 
----
+**Error: `connection to the server 127.0.0.1:XXXXX was refused`**
 
-## 🔧 Useful Commands
+Cluster context is missing or the cluster is down:
 ```bash
-# Containers stop karo
-docker stop flask-app mysql
+docker ps                                    # check if KIND containers are running
+kubectl config get-contexts                  # check available contexts
+kubectl config use-context kind-two-tier-cluster
+kubectl cluster-info
+```
 
-# Containers delete karo
-docker rm flask-app mysql
+If containers aren't running, recreate the cluster:
+```bash
+kind create cluster --name two-tier-cluster --config kind-config.yaml
+```
 
-# Network delete karo
-docker network rm flask-net
-
-# Images delete karo
-docker rmi flask-app mysql:5.7
+**Pods stuck in `Pending` or `CrashLoopBackOff`:**
+```bash
+kubectl describe pod <pod-name> -n <namespace>
+kubectl logs <pod-name> -n <namespace>
 ```
 
 ---
 
-*Made with ❤️ by Nasir Baloch — DevOps Journey 🚀*
-*github.com/nasirbloch323*
+## Conclusion
+
+This project demonstrates a cost-effective two-tier Kubernetes deployment PoC using KIND on EC2 — covering cluster setup, namespace isolation, Deployments, Services (ClusterIP vs NodePort), and a path toward secure credential management with Kubernetes Secrets.
