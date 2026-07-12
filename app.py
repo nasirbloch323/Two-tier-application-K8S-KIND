@@ -34,7 +34,7 @@ def init_db():
             ''')
             mysql.connection.commit()
             cur.close()
-            print("✅ Table created or already exists.")
+            print("✅ Table creat or already exists.")
         except Exception as e:
             print("❌ DB init error:", e)
 
