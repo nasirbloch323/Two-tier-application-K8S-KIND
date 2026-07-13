@@ -1,6 +1,6 @@
 FROM python:3.9-slim
 
-# Set working directory
+# Set working directorys
 WORKDIR /app
 
 # Install system dependencies required for mysqlclient (Flask-MySQLdb)
