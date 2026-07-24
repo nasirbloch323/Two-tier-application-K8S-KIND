@@ -198,7 +198,7 @@ kubectl get ns
 ### Step 6: Build & Push Flask Docker Image
 
 ```bash
-git clone https://github.com/Umair1012/two-tier-app.git
+git clone https://github.com/nasirbloch323/two-tier-app.git
 cd two-tier-app/app
 
 docker build -t <dockerhub-username>/flask-two-tier:latest .
